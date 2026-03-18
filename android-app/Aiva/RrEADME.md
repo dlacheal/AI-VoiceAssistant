@@ -1,3 +1,6 @@
+<img width="1536" height="1024" alt="image_apk" src="https://github.com/user-attachments/assets/3f291be1-58ed-4573-941a-b444eeec2e9a" />
+
+
 # 📱 Documentación Técnica — AIVA (AI Voice Assistant)
 
 ## 1. Descripción General
