@@ -1,5 +1,6 @@
 
-<img width="1536" height="1024" alt="logo" src="https://github.com/user-attachments/assets/78d9ddc9-1fe4-4dc2-9f64-f3ef4414942c" />
+<img width="384" height="256" alt="logo" src="https://github.com/user-attachments/assets/029b4427-f2fe-4421-8fe2-8998f1bc9312" />
+
 
 
 # 📱 AIVA — AI Voice Assistant (Local-First)
