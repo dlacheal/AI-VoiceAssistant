@@ -1,4 +1,6 @@
-![alt text](logo.png)
+<img width="384" height="256" alt="logo" src="https://github.com/user-attachments/assets/3cfbb2f6-22a4-46b9-a36d-d7727a5e2b77" />
+
+
 # Documentación de Instalación — OpenClaw + Ollama + DeepSeek/Qwen2.5
 **Fedora Linux — Podman — RTX 3050**
 
