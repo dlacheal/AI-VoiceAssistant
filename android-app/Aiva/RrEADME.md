@@ -168,8 +168,8 @@ Realiza peticiones **HTTP POST** al servidor OpenClaw.
 
 **Configuración:**
 ```kotlin
-private val HTTP_URL = "http://192.168.18.114:18789/v1/chat/completions"
-private val TOKEN = "85d20333e55486094af59e45f76cd51d4d0ebe5d95d0758c"
+private val HTTP_URL = "http://[IP_ADDRESS]/v1/chat/completions"
+private val TOKEN = "<YOUR_TOKEN>"
 ```
 
 **Formato del request (compatible con OpenAI):**
@@ -315,7 +315,7 @@ Ubicación por defecto:
     "bind": "lan",
     "auth": {
       "mode": "token",
-      "token": "85d20333e55486094af59e45f76cd51d4d0ebe5d95d0758c"
+      "token": "<YOUR_TOKEN>"
     },
     "http": {
       "endpoints": {
