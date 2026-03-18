@@ -1,5 +1,7 @@
 
-![alt text](<ChatGPT Image 17 mar 2026, 09_40_28 p.m..png>)
+<img width="1536" height="1024" alt="logo" src="https://github.com/user-attachments/assets/78d9ddc9-1fe4-4dc2-9f64-f3ef4414942c" />
+
+
 # 📱 AIVA — AI Voice Assistant (Local-First)
 
 **AIVA** es un asistente de voz de alto rendimiento diseñado para operar de manera 100% local, garantizando privacidad absoluta y soberanía de datos. El sistema integra una aplicación móvil nativa en Android con un backend de inferencia de IA desplegado sobre Fedora Linux, optimizado para hardware con VRAM limitada.
