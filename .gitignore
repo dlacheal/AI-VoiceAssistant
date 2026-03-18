@@ -1,0 +1,38 @@
+# --- SEGURIDAD Y LLAVES (CRÍTICO) ---
+# Certificados SSL/TLS generados para Nginx y OpenClaw [cite: 96, 97, 78, 79]
+*.pem
+*.key
+*.crt
+*.csr
+certs/
+
+# Archivos de configuración con Tokens reales [cite: 75, 88, 92]
+# Se recomienda subir versiones ".example" sin datos reales
+openclaw_config/openclaw.json
+openclaw_config/agents/main/agent/auth-profiles.json
+
+# --- ANDROID (KOTLIN) ---
+# Archivos de compilación y salida [cite: 135]
+build/
+app/build/
+.gradle/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aar
+
+# Archivos del IDE (Android Studio / IntelliJ)
+.idea/
+*.iml
+.DS_Store
+
+# --- SERVIDOR Y LINUX ---
+# Logs de contenedores y sistema [cite: 140, 141, 142]
+*.log
+nginx.conf
+
+# Directorios de datos de contenedores (Base de datos de Ollama) [cite: 25]
+ollama_data/
+workspace/
