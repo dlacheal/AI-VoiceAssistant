@@ -1,0 +1,63 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.3'
+	id 'io.spring.dependency-management' version '1.1.7'
+    id 'application'
+}
+
+group = 'com.saamcito.agente'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+	maven { url 'https://repo.spring.io/milestone' }
+}
+
+ext {
+	set('springAiVersion', "1.0.0-M6")
+}
+
+dependencies {
+	// Web & Actuator
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+	// Spring AI - Ollama (changed from OpenAI)
+	implementation 'org.springframework.ai:spring-ai-ollama-spring-boot-starter'
+
+	// Spring AI - Simple in-memory vector store for RAG
+	implementation 'org.springframework.ai:spring-ai-transformers-spring-boot-starter'
+
+	// Spring AI - PDF Reader
+	implementation 'org.springframework.ai:spring-ai-pdf-document-reader'
+
+	// Lombok
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
+	// Test
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	// Spring AI - PGVector (Sustituye la lógica del SimpleVectorStore)
+    implementation 'org.springframework.ai:spring-ai-pgvector-store-spring-boot-starter'
+
+    // Driver de Base de Datos
+    implementation 'org.postgresql:postgresql'
+}
+
+dependencyManagement {
+	imports {
+		mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+	}
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

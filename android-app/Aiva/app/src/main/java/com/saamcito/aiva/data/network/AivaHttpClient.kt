@@ -10,37 +10,34 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.cert.X509Certificate
+import java.util.UUID
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 class AivaHttpClient {
 
-    // Puerto 18789 = gateway HTTP plano (sin TLS, a diferencia del WebSocket 18790)
-    private val HTTP_URL = "http://192.168.1.X:18789/v1/chat/completions" // Reemplaza con la IP de tu servidor
-    private val TOKEN = "<YOUR_TOKEN>" // Reemplaza con tu token de openclaw.json
+    // Apunta al backend RAG alojado en Fedora (Spring Boot)
+    private val HTTP_URL = "http://[IP_ADDRESS]:8082/api/chat" // Servidor RAG local
 
-    // Ignorar certificados autofirmados
+    // Ignorar certificados autofirmados (por si en un futuro hay HTTPS)
     private val client = crearClienteSSL()
 
+    // ID de conversación único por sesión de la app para mantener el contexto en el backend RAG
+    private val conversationId = UUID.randomUUID().toString()
+
     suspend fun sendMessage(text: String): String? = withContext(Dispatchers.IO) {
-        // Formato OpenAI: { model, messages: [{role, content}] }
+        // Formato esperado por el RAG (ChatRequest DTO)
         val body = JSONObject().apply {
-            put("model", "ollama/qwen2.5:3b")   // modelo primario de openclaw.json
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", text)
-                })
-            })
-            put("stream", false)
+            put("message", text)
+            put("conversationId", conversationId)
         }
 
         val requestBody = body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
         val request = Request.Builder()
             .url(HTTP_URL)
-            .addHeader("Authorization", "Bearer $TOKEN")
+            // No requiere Token actualmente ya que es local
             .post(requestBody)
             .build()
 
@@ -51,13 +48,9 @@ class AivaHttpClient {
 
             if (response.isSuccessful && rawBody != null) {
                 return@withContext try {
-                    // Parsear respuesta formato OpenAI: choices[0].message.content
+                    // Parsear respuesta formato ChatResponse: { "reply": "...", "conversationId": "..." }
                     val json = JSONObject(rawBody)
-                    val choices = json.optJSONArray("choices")
-                    choices?.getJSONObject(0)
-                        ?.getJSONObject("message")
-                        ?.optString("content")
-                        ?: rawBody
+                    json.optString("reply", rawBody) // si no existe 'reply', devuelve todo el body
                 } catch (e: Exception) {
                     rawBody
                 }

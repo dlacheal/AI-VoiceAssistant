@@ -83,9 +83,21 @@ Error de voz 7: Problemas de conexión o servicios de Google Speech no disponibl
 
 ---
 
-## 🚀 Futuras Mejoras (Roadmap)
+## 🧠 Backend de Conocimiento (Directorio `rag`)
 
-RAG Local: Implementación de base de datos vectorial para consultas sobre documentos personales.
+El proyecto en el directorio [`rag`](./rag) implementa un sistema robusto de **Retrieval-Augmented Generation (RAG)** construido con **Spring Boot** y **Spring AI**. Actúa como el motor de conocimiento especializado del asistente AIVA.
+
+**Características destacadas:**
+- **Base de Datos Vectorial:** Emplea PostgreSQL con la extensión `pgvector` para el almacenamiento y búsqueda semántica de embeddings.
+- **Recuperación Avanzada:** Implementa búsqueda híbrida (Vector + Keyword Search) combinada con Fusión RRF y re-ranking.
+- **Ingesta Documental:** Procesamiento automático de texto plano y PDFs mediante extractores avanzados.
+- **Anti-Alucinaciones:** Uso de Guardrails y prompts estructurados para obligar a la IA a responder basándose única y estrictamente en el contexto proveído.
+
+Para la guía detallada de arquitectura, despliegue y endpoints del pipeline RAG, consulta su [README dedicado](./rag/README.md).
+
+---
+
+## 🚀 Futuras Mejoras (Roadmap)
 
 Memoria de Contexto: Optimización del historial de mensajes para mantener conversaciones coherentes a largo plazo.
 
