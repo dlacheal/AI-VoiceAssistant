@@ -18,18 +18,31 @@ La topología del sistema implementa un potente modelo cliente-servidor desacopl
 ```mermaid
 graph TD
     subgraph "Edge Client (Android Native App)"
-        STT[Speech-to-Text Engine] -->|Captura de Transcripción| ViewModel[MVVM Controller]
-        ViewModel -->|Payload Compatible OpenAI| HTTPClient[REST Client / Network Layer]
-        HTTPClient -->|Flujo de Respuesta| TTS[Text-to-Speech Engine]
+        STT[Speech-to-Text Engine] -->|Transcripción| ViewModel[MVVM Controller]
+        ViewModel -->|Petición REST| HTTPClient[REST Client / Network Layer]
+        HTTPClient -->|Lectura Fluida| TTS[Text-to-Speech Engine]
     end
 
     subgraph "Core AI Infrastructure (Fedora Linux / Podman)"
-        Gateway[OpenClaw API Gateway] -->|Enrutamiento Local Estricto| Ollama[Motor de Inferencia Ollama]
-        Ollama -->|Generación Qwen2.5:3b| Gateway
+        Gateway[OpenClaw API Gateway]
+        Ollama[Motor de Inferencia Ollama <br> Qwen2.5:3b]
+        
+        subgraph "Enterprise RAG Subsystem"
+            Spring[Spring Boot + Spring AI <br> Orchestrator]
+            PG[(PostgreSQL + pgvector <br> Vector Store)]
+        end
+        
+        %% Conexiones Internas Backend
+        Gateway <-->|Generación Básica (Zero Context)| Ollama
+        Spring <-->|Búsqueda Híbrida & RRF| PG
+        Spring <-->|Inyección de Prompts Restringidos| Ollama
     end
 
-    HTTPClient -.->|HTTP POST / Local LAN| Gateway
+    %% Conexiones Cliente-Servidor
+    HTTPClient -.->|Chat Conversacional <br> Puerto 18789| Gateway
+    HTTPClient -.->|Consultas Normativas/RAG <br> Puerto 8082| Spring
     Gateway -.->|Streamed JSON Response| HTTPClient
+    Spring -.->|JSON Estructurado (Output Guardrails)| HTTPClient
 ```
 
 ### ⚙️ Stack Tecnológico Core
