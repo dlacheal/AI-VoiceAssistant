@@ -6,8 +6,6 @@ Este proyecto implementa un sistema RAG (Retrieval-Augmented Generation) en Java
 
 ## 🏗️ Arquitectura y Tecnologías
 
-![Arquitectura General End-to-End](../docs/Arquitectura%20General_End-to-End.png)
-
 El sistema está construido sobre una arquitectura moderna basada en la nube:
 
 * **Framework Base**: Spring Boot 3.4.3 (Java 21)
@@ -27,8 +25,6 @@ Se decidió utilizar la especificación oficial de **Spring AI** para integrarse
 
 Adicionalmente, se cuenta con extracciones ricas orientada a normativas de la SBS (NLP Metadata) usando Regex para identificar Artículos o Capítulos e inyectarlos localmente a la BD de PGVector, y un **Re-Ranking Avanzado** (Cross-Encoder Semántico) implementado en el propio motor de búsquedas para pulir y entregar exactamente los párrafos que importan reduciendo los tokens y costos enviados al modelo.
 
-![Pipeline de Ingesta de Documentos](../docs/Pipeline%20de%20Ingesta%20de%20Documentos.png)
-
 ---
 
 ## 🛠️ Entorno de Base de Datos (PostgreSQL + PGVector)
@@ -38,84 +34,225 @@ El proyecto requiere una base de datos PostgreSQL con la extensión **pgvector**
 ```bash
 docker run --name aiva-postgres \
   -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=<YOUR_DB_PASSWORD> \
+  -e POSTGRES_PASSWORD=1234 \
   -e POSTGRES_DB=postgres \
   -p 25432:5432 \
   -d pgvector/pgvector:pg16
 ```
 
-Una vez levantada, aunque Spring AI puede encargarse automáticamente de inicializar las tablas, es altamente recomendable ejecutar el siguiente script SQL directo en tu cliente de PostgreSQL (DBeaver, pgAdmin) para preparar la base de datos para tus normativas e índices HNSW de alta velocidad:
+### Inicialización de Tablas
+
+Una vez levantada la base de datos, ejecuta el siguiente script SQL (DBeaver, pgAdmin o `psql`):
 
 ```sql
 -- 1. Habilitar la extensión de vectores
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 2. Crear la tabla para tus ISOs (27001 y 42001)
-CREATE TABLE IF NOT EXISTS vector_store (
-	id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-	content text,
-	metadata jsonb,
-	embedding vector(384) -- 384 es la dimensión de TransformersEmbeddingModel
+-- 2. Crear la tabla principal del Vector Store (Spring AI)
+CREATE TABLE IF NOT EXISTS vector_store_e5_v1 (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    content text,
+    metadata jsonb,
+    embedding vector(384)   -- 384 dimensiones (multilingual-e5-small)
 );
 
--- 3. Crear un índice HNSW (Para búsquedas semánticas eficientes)
-CREATE INDEX ON vector_store USING hnsw (embedding vector_cosine_ops);
+-- 3. Índice HNSW para búsqueda semántica eficiente
+CREATE INDEX ON vector_store_e5_v1 USING hnsw (embedding vector_cosine_ops);
 
--- 4. Crear un índice GIN (Para optimizar la búsqueda Full-Text Keyword Search)
-CREATE INDEX IF NOT EXISTS vector_store_content_idx ON vector_store USING GIN (to_tsvector('spanish', content));
+-- 4. Índice GIN para Full-Text Search en español
+CREATE INDEX IF NOT EXISTS vector_store_e5_v1_content_idx
+    ON vector_store_e5_v1 USING GIN (to_tsvector('spanish', content));
+
+
+
+-- ─────────────────────────────────────────────────────────────
+-- PROMPT TRACKING — tablas creadas automáticamente al arrancar
+-- (Spring las inicializa con spring.sql.init al levantar la app)
+-- ─────────────────────────────────────────────────────────────
+
+-- 5. Versiones de System Prompts
+CREATE TABLE IF NOT EXISTS prompt_versions (
+    id            BIGSERIAL    PRIMARY KEY,
+    prompt_name   VARCHAR(100) NOT NULL,
+    version       VARCHAR(30)  NOT NULL,
+    content       TEXT         NOT NULL,
+    description   TEXT,
+    created_at    TIMESTAMP    NOT NULL DEFAULT now(),
+    is_active     BOOLEAN      NOT NULL DEFAULT true,
+    CONSTRAINT uq_prompt_name_version UNIQUE (prompt_name, version)
+);
+
+-- 6. Registro de ejecuciones del LLM
+CREATE TABLE IF NOT EXISTS prompt_executions (
+    id                BIGSERIAL    PRIMARY KEY,
+    prompt_version_id BIGINT       REFERENCES prompt_versions(id) ON DELETE SET NULL,
+    prompt_name       VARCHAR(100) NOT NULL,
+    question          TEXT         NOT NULL,
+    context_snippets  INT          NOT NULL DEFAULT 0,
+    response_preview  TEXT,
+    latency_ms        BIGINT,
+    executed_at       TIMESTAMP    NOT NULL DEFAULT now()
+);
+
+-- Índices para consulta rápida del Prompt Tracking
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_name   ON prompt_versions  (prompt_name);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_active ON prompt_versions  (prompt_name, is_active);
+CREATE INDEX IF NOT EXISTS idx_prompt_executions_name ON prompt_executions (prompt_name);
+CREATE INDEX IF NOT EXISTS idx_prompt_executions_ver  ON prompt_executions (prompt_version_id);
 ```
+
+> **Nota**: Las tablas de **Prompt Tracking** (`prompt_versions`, `prompt_executions`) también se crean automáticamente al arrancar la app gracias a la configuración `spring.sql.init.schema-locations` en `application.properties`. El script manual es solo para referencia o entornos donde el init automático esté desactivado.
+
+---
+
+## 🔄 Prompt Tracking — Versionado y Trazabilidad
+
+El sistema registra automáticamente cada versión de los System Prompts y todas las llamadas al LLM, permitiendo comparar cómo evolucionan los prompts y medir su impacto en latencia y calidad.
+
+### ¿Cómo funciona?
+
+**Al arrancar la app:**
+1. `SbsRagService` y `RagService` ejecutan un `@PostConstruct` que detecta si el contenido del prompt cambió.
+2. Si es la primera vez → crea la versión `1.0.0`.
+3. Si el contenido cambió respecto a la versión activa → desactiva la anterior y crea `1.1.0`, `1.2.0`, etc.
+4. Si el contenido es idéntico → no hace nada (idempotente).
+
+**En cada llamada al LLM:**
+- Se mide la latencia (`startTime` → `endTime`).
+- Se registra en `prompt_executions`: pregunta, versión usada, snippets RAG enviados, preview de la respuesta (500 chars) y latencia.
+
+**Para versionar un prompt manualmente:**
+1. Modifica el texto de `SYSTEM_PROMPT_TEMPLATE` en `SbsRagService.java` o `RagService.java`.
+2. Reinicia la app → la versión se crea automáticamente.
+
+### Prompts registrados
+
+| Nombre | Servicio | Descripción |
+|--------|----------|-------------|
+| `SBS_AUDITOR` | `SbsRagService` | Auditor normativo SBS — responde en JSON con referencia legal |
+| `AIVA_RAG` | `RagService` | Asistente corporativo AIVA con Chain-of-Thought |
 
 ---
 
 ## 🔍 Recuperación Avanzada (Hybrid Search & Top-K)
 
-![Pipeline RAG Detalle Interno](../docs/Pipeline%20RAG_Detalle%20Interno.png)
-
 Para optimizar la precisión y recall de los resultados, el sistema implementa técnicas avanzadas de recuperación en los servicios `RagService` y `SbsRagService`:
 
-1. **Top-K Paramétrico**: El número de documentos recuperados (`rag.retrieval.topK`) y los umbrales de similitud se controlan desde `application.properties` para poder afinarse sin requiere recompilación.
-2. **Búsqueda Híbrida (Vector + Keyword Search)**: Las consultas no solo se basan en similitud de cosenos (Vector Search) proveniente de los *Transformers Embeddings*, sino que cruzan los datos simultáneamente con una búsqueda por coincidencia de palabras exacta (Full-Text Search) nativa mediante el `JdbcTemplate` de PostgreSQL.
-3. **Fusión RRF (Reciprocal Rank Fusion)**: Los resultados provenientes de ambas listas (semántica y por palabra clave) se unifican algorítmicamente ponderando sus rankings mediante la fórmula de *Reciprocal Rank Fusion*, garantizando que los fragmentos de contexto más valiosos se envíen al LLM.
+1. **Top-K Paramétrico**: El número de documentos recuperados (`rag.retrieval.topK`) y los umbrales de similitud se controlan desde `application.properties` para poder afinarse sin recompilación.
+2. **Búsqueda Híbrida (Vector + Keyword Search)**: Las consultas no solo se basan en similitud de cosenos (Vector Search) sino que cruzan los datos simultáneamente con una búsqueda por coincidencia de palabras exacta (Full-Text Search) nativa mediante `JdbcTemplate`.
+3. **Fusión RRF (Reciprocal Rank Fusion)**: Los resultados provenientes de ambas listas (semántica y por palabra clave) se unifican algorítmicamente ponderando sus rankings mediante la fórmula de *Reciprocal Rank Fusion*.
 
 ---
 
 ## 🛡️ Ingeniería de Prompts (Guardrails & Anti-Hallucination)
 
-Para llevar la confiabilidad del sistema de "experimental" a "grado de producción" (nivel Enterprise), se han implementado técnicas avanzadas de Prompt Engineering:
+Para llevar la confiabilidad del sistema de "experimental" a "grado de producción" (Enterprise), se han implementado técnicas avanzadas de Prompt Engineering:
 
-1. **System Prompts Estructurados**: Separación clara de contexto, directivas y restricciones usando meta-etiquetas (ej. `[ROLE]`, `[CONSTRAINTS]`, `<context>`). Esto permite que modelos de lenguaje reaccionen a reglas de manera asombrosamente estricta sin confundir instrucciones con datos.
-2. **Output Guardrails (Formato Resiliente)**: El servicio `SbsRagService` fuerza al LLM a estructurar la respuesta exclusivamente como un objeto JSON validado (`SbsResponse`). Se integró un mecanismo *"Fail-Safe"* de extracción nativa que repara la respuesta en milisegundos en caso de que el modelo intente inyectar texto o etiquetas Markdown alrededor del JSON.
-3. **Input Guardrails & Anti-Hallucination**: Restricción explícita de *Groundedness* que anula las alucinaciones. Si la pregunta busca temas prohibidos (Prompt Injection), recetas o información inexistente en la Base de Datos PGVector, el modelo está rígidamente parametrizado para responder que no tiene la información en vez de especular.
-4. **Context Steering (Few-Shot Prompting)**: En la clase `RagService`, la memoria se inicializa dinámicamente inyectando ejemplos previos *Chain-of-Thought* (Razonamiento Paso a Paso). Esto alinea forzosamente el tono e inteligencia del bot para que imite esa misma estructura lógica en tu pregunta.
+1. **System Prompts Estructurados**: Separación clara de contexto, directivas y restricciones usando meta-etiquetas (`[ROLE]`, `[CONSTRAINTS]`, `<context>`).
+2. **Output Guardrails (Formato Resiliente)**: `SbsRagService` fuerza al LLM a estructurar la respuesta exclusivamente como JSON validado (`SbsResponse`).
+3. **Input Guardrails & Anti-Hallucination**: Restricción explícita de *Groundedness* — si la información no está en el contexto, el modelo responde que no la tiene en lugar de especular.
+4. **Context Steering (Few-Shot Prompting)**: La memoria se inicializa inyectando ejemplos Chain-of-Thought para alinear el tono y razonamiento del bot.
+
+---
+
+## 📊 Observabilidad (OpenTelemetry & Arize Phoenix)
+
+El proyecto incluye instrumentación completa nativa con **OpenTelemetry (OTLP)**. Todos los tiempos de procesamiento de texto, inserción en la base de datos vectorial (`PgVectorStore`), parseo de respuestas, llamadas a la API de Ollama y el consumo exacto de tokens (Prompt y Generation) se envían automáticamente al servidor de observabilidad.
+
+Utilizamos **Arize Phoenix**, una plataforma open-source especializada en visualizar grafos de ejecución (Spans), rastrear la recuperación del RAG y evaluar el desempeño de la capa LLM.
+
+### 1. Iniciar Arize Phoenix con Docker
+En la terminal de tu entorno, despliega Phoenix. Toma en cuenta que usa su propio puerto `6006` tanto para recibir la telemetría OTLP HTTP como para acceder a la Interfaz Gráfica (Dashboard Ui):
+
+```bash
+docker run -d \
+  --name aiva-phoenix \
+  -p 6006:6006 \
+  -p 4317:4317 \
+  arizephoenix/phoenix:latest
+```
+
+*(El puente OTLP está configurado en `application.properties` para apuntar a `http://[IP-SERVIDOR]:6006/v1/traces`)*
+
+### 2. Acceso al Dashboard
+Una vez que Phoenix y la aplicación Spring estén corriendo:
+1. Realiza al menos una invocación a un endpoint (ej: `/api/sbs/ask`).
+2. Abre tu navegador y navega hacia `http://[IP-SERVIDOR]:6006`.
+3. Dirígete a la sección **Traces** o **LLMs** para ver el rastreo milimétrico de la generación del texto y de la memoria usada en tu modelo RAG.
+
+---
+
+## 🧪 Experimentación y MLOps (MLflow Tracking)
+
+Para gestionar rigurosamente el ajuste de hiperparámetros (Chunk size, Top-K, model types) y observar qué configuración obtiene mejor *Accuracy* sin perder memoria de pruebas pasadas, el RAG integra un cliente HTTP nativo hacia **MLflow**.
+
+A diferencia de las arquitecturas en Python, este proyecto invoca las APIs REST de MLflow transparentemente desde los servicios Java (`MlflowClientService.java`). Cada vez que evalúas el Ground Truth en `/api/evaluate/scoring`, Spring Boot inyecta silenciosamente los resultados a MLflow.
+
+### Despliegue del Servidor MLflow (Local)
+Para habilitarlo, levanta el puerto `5000`. Debido a las políticas estrictas de seguridad de MLflow (CORS/FastAPI), si experimentas errores de conexión o HTTP 403, permite cualquier host usando comodines (solo seguro para testing en red local):
+
+```bash
+docker run -d \
+  --name aiva-mlflow \
+  -p 5000:5000 \
+  ghcr.io/mlflow/mlflow mlflow server \
+  --host 0.0.0.0 \
+  --serve-artifacts \
+  --allowed-hosts "*" \
+  --cors-allowed-origins "*"
+```
+
+*(Una vez ejecutado, abre `http://localhost:5000` o la IP de tu servidor en tu navegador para ver las métricas de Accuracy de RAG)*
+
+---
+
+## 🔀 Versionado de Embeddings y A/B Testing
+
+Para permitir escalabilidad y pruebas sin corromper la memoria del sistema, el RAG implementa un modelo de **colecciones aisladas** (Collection-per-Version).
+
+En lugar de utilizar una tabla dura y quemada en código, el sistema enruta las peticiones de búsquedas e inserciones a través de un proxy (`RoutingVectorStore.java`) y soporta Tablas Dinámicas mediante `application.properties`:
+
+```properties
+spring.ai.vectorstore.pgvector.table-name=vector_store_e5_v1
+```
+
+### Ventajas de este Patrón:
+1. **Preservación Segura:** Tus tablas e índices creados con modelos locales (ej. `e5-small` a 384 dimensiones) quedan blindados en su propia tabla base (`vector_store_e5_v1`).
+2. **A/B Testing en Vivo:** En un futuro cercano, conectando `ModelContextHolder`, la aplicación RAG puede usar al vuelo la tabla `vector_store_openai_v2` con índices de 1536 dimensiones, sin chocar ni sobreescribir vectores antiguos. 
+
+*(El versionado local ya fue inicializado mediante la migración Liquibase V3).*
+
+---
+
+## 📜 Data Lineage & Versionado Documental (Blob Storage Local)
+
+El sistema ahora cuenta con trazabilidad absoluta histórica. Cada vez que se sube un PDF a la ruta del *FileWatcher*, no solo se indexa, sino que el sistema calcula su **Hash SHA-256**. 
+
+1. **Idempotencia (Ahorro de Costos):** Si el Hash ya existe en el sistema, el sistema ignora la tarea y bloquea el chunking costoso, ahorrando CPU y tokens.
+2. **Respaldo Histórico (Archive):** Si el Hash es diferente (una versión modificada del PDF), se genera una **versión incremental** en la base de datos (Ej: `v2`) y el documento físico es blindado permanentemente como Blob en el directorio `rag.document-archive.path` (por defecto `./fedora-docs-archive/`), renombrado similar a: `ISO-9001_v2_f8a9e22b.pdf`.
+3. **Saneamiento Vectorial:** Simultáneamente elimina los fragmentos de la versión antigua en Postgres y guarda la nueva versión. Así, el RAG solo responde sobre la última revisión, pero guardamos el archivo inmutable previo por si un "Auditor Humano" necesita investigar de dónde sacó una respuesta el LLM el mes pasado.
+
+*(Consulta la tabla PostgreSQL `document_versions` para ver el historial y bitácora de toda la documentación corporativa inyectada).*
 
 ---
 
 ## ⚙️ Compilación del Proyecto (Build)
 
-Antes de generar una nueva versión de la imagen Docker o si se han hecho cambios en el código (como inyectar los Módulos RAG Avanzados), debes compilar el artefacto ejecutable.
-
-**Comando:**
 ```bash
 ./gradlew clean build -x test
 ```
 
-**¿Para qué se usa?**
-- `clean`: Elimina la carpeta `build/` anterior garantizando que no haya código "fantasma" o residual.
-- `build`: Empaqueta y compila el código `.java` generando el archivo ejecutable (`.jar`).
-- `-x test`: Instruye al compilador a **excluir u omitir deliberadamente** la ejecución de las pruebas unitarias.
+| Flag | Propósito |
+|------|-----------|
+| `clean` | Elimina la carpeta `build/` anterior |
+| `build` | Compila el código `.java` y genera el `.jar` ejecutable |
+| `-x test` | Excluye las pruebas unitarias (evita `OutOfMemoryError` en entornos limitados) |
 
-**¿Cuándo se usa?**
-- Cuando estás desarrollando rápido e iterativamente y no quieres perder tiempo corriendo tests o levantando contextos (Spring Boot demora en levantar para testear).
-- Cuando tu servidor o entorno local se queda sin memoria RAM al intentar correr las pruebas (`OutOfMemoryError`) pero el código funciona estáticamente bien.
-- Como paso estrictamente previo antes de correr `podman build / docker build`.
+> ⚠️ El primer build descarga los modelos ONNX de embedding (~100MB) y cross-encoder (~87MB) desde HuggingFace. En conexiones lentas puede tomar 20-40 minutos. Las ejecuciones posteriores usan caché de Gradle.
 
 ---
 
 ## 🚀 Despliegue en Servidor Fedora con Docker/Podman
-
-![Despliegue Nivel Enterprise](../docs/Despliegue_Nivel%20Enterprise.png)
-
-El proyecto cuenta con un `Dockerfile` optimizado en dos etapas (Builder y Runtime) para asegurar un peso mínimo en producción y el cacheo de dependencias de Gradle.
 
 **1. Construir la imagen:**
 ```bash
@@ -123,13 +260,11 @@ podman build -t aiva-rag-backend .
 ```
 
 **2. Ejecutar la aplicación (con volumen para el File Watcher):**
-Debido a que cuentas con un File Watcher interno que escucha sobre `/app/fedora-docs`, necesitas crear el directorio local y montarlo. Como estás en Fedora/RHEL, SELinux bloquea los accesos a volúmenes por defecto, por ello es obligatorio pasar el flag de seguridad `:Z`:
-
 ```bash
-# Paso 1: Crear directorio de PDFs en la ruta local actual de Fedora
+# Paso 1: Crear directorio de PDFs
 mkdir -p $(pwd)/fedora-docs
 
-# Paso 2: Iniciar contenedor exponiendo el puerto 8082 y montando el volumen con permisos de SELinux (:Z)
+# Paso 2: Iniciar el contenedor
 podman run -d \
   --name aiva-rag-backend \
   -p 8082:8082 \
@@ -137,55 +272,67 @@ podman run -d \
   aiva-rag-backend
 ```
 
+> El flag `:Z` es obligatorio en Fedora/RHEL porque SELinux bloquea accesos a volúmenes por defecto.
+
 ---
 
-## 🧪 Instrucciones de Prueba (Postman / cURL)
+## 🧪 Pruebas — Guía completa de Endpoints (curl)
 
-A continuación, los comandos y el orden exacto de ejecución sugerido para probar las funcionalidades del flujo RAG en Postman tras levantar tu servidor:
+La aplicación corre en `http://localhost:8082`. Sustituye `localhost` por la IP de tu servidor Fedora si aplica.
 
-### Paso 1: Ingestar conocimiento explícito manual (DocumentController)
-Puedes forzar inyección de conocimiento en el `vector_store` mediante strings crudos para enriquecer la IA con contexto personalizado.
+---
 
-**Request:**
+### 📄 1. Ingestar conocimiento manual (DocumentController)
+
+Inyecta texto libre directamente al `vector_store`.
+
 ```bash
-curl --location 'http://[IP_ADDRESS]:8082/api/documents' \
---header 'Content-Type: application/json' \
---data '{
-    "content": "El asistente AIVA fue desarrollado de forma exclusiva por Saamcito en el año 2026. AIVA es un asistente de voz avanzado para Android.",
+curl -X POST 'http://localhost:8082/api/documents' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "El asistente AIVA fue desarrollado por Saamcito en el año 2026. Es un asistente de voz avanzado para Android.",
     "source": "conocimiento_interno"
-}'
+  }'
 ```
 
-### Paso 2: Interactuar con el Chat General (RagController)
-Realiza preguntas generales, la aplicación embeberá el mensaje y recuperará los documentos más semánticamente similares guardados en el Paso 1.
+---
 
-**Request:**
+### 💬 2. Chat General con contexto RAG (ChatController)
+
+Preguntas conversacionales — recupera documentos del `vector_store` y responde con contexto.
+
 ```bash
-curl --location 'http://localhost:8082/api/chat' \
---header 'Content-Type: application/json' \
---data '{
-    "message": "¿que es Programacion orientada a objetos?",
+curl -X POST 'http://localhost:8082/api/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "¿Qué es programación orientada a objetos?",
     "conversationId": "sesion-prueba"
-}'
+  }'
 ```
 
-### Paso 3: Disparar la Indexación manual de Normativas SBS (SbsRagController)
-*Nota:* El mecanismo de **File Watcher** lo hace atomáticamente al crear o mover un archivo a la carpeta `fedora-docs`. Sin embargo, puedes triggear manualmente la indexación de los PDFs de los resources:
+---
 
-**Request:**
+### 📚 3. Indexar PDFs de normativas SBS (SbsRagController)
+
+> El **File Watcher** indexa automáticamente los PDFs que se copien a la carpeta `fedora-docs/`. Este endpoint dispara la indexación manual de los PDFs ubicados en `src/main/resources/docs/`.
+
 ```bash
-curl --location --request POST 'http://[IP_ADDRESS]:8082/api/sbs/index'
+curl -X POST 'http://localhost:8082/api/sbs/index'
 ```
 
-### Paso 4: Preguntar al asistente de normativas SBS (SbsRagController)
-Usamos el endpoint diseñado estrictamente para devolver contexto de la Superintendencia de Banca de los PDFs procesados en el Paso 3.
+---
 
-**Request:**
+### ⚖️ 4. Preguntar al auditor normativo SBS (SbsRagController)
+
+Responde **exclusivamente** con información de los PDFs indexados, en formato JSON estructurado.
+
 ```bash
-curl --location 'http://[IP_ADDRESS]:8082/api/sbs/ask?question=%C2%BFque%20dice%20la%20norma%20ISO%2027001%3F'
+curl -X POST 'http://localhost:8082/api/sbs/ask' \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "¿Qué dice la norma ISO 27001?"}'
 ```
 
-**Respuesta Exitosa Esperada (Output Guardrail JSON):**
+**Respuesta esperada (Output Guardrail JSON):**
 ```json
 {
   "respuesta": "La norma ISO/IEC 27001 detalla los requisitos para establecer, implementar, mantener y mejorar continuamente un SGSI.",
@@ -193,24 +340,24 @@ curl --location 'http://[IP_ADDRESS]:8082/api/sbs/ask?question=%C2%BFque%20dice%
 }
 ```
 
-### Paso 5: Probar el Sistema de Evaluación Automática (Hybrid Scoring)
+---
 
-Este módulo expone un endpoint enfocado en medir qué tan correcta fue la respuesta de nuestro asistente frente a una respuesta "Ground Truth" esperada.
+### 🏆 5. Evaluación automática de respuestas (HybridScoringController)
 
-### ⚡ Prueba 1: Fast Path (Similitud Lexical Alta)
-Esta prueba no utiliza el LLM y se ejecuta en **< 5 milisegundos**, devolviendo un *score* de 100 automático por solapamiento de texto.
+Mide qué tan correcta fue la respuesta generada comparada con una respuesta esperada ("Ground Truth").
 
-**Request:**
+#### ⚡ Fast Path — Similitud lexical alta (< 5 ms, sin LLM)
+
 ```bash
-curl --location 'http://localhost:8082/api/evaluate/scoring' \
---header 'Content-Type: application/json' \
---data '{
+curl -X POST 'http://localhost:8082/api/evaluate/scoring' \
+  -H 'Content-Type: application/json' \
+  -d '{
     "generatedAnswer": "La SBS es la superintendencia de banca",
     "expectedAnswer": "la superintendencia de banca es la sbs"
-}'
+  }'
 ```
 
-**Respuesta Esperada:**
+**Respuesta esperada:**
 ```json
 {
   "score": 100.0,
@@ -219,20 +366,18 @@ curl --location 'http://localhost:8082/api/evaluate/scoring' \
 }
 ```
 
-### 🧠 Prueba 2: Slow Path (Fallback al LLM - Cross-Encoder Semántico)
-Esta prueba falla el motor numérico rápido (por diferencias léxicas extremas) y dispara el LLM interno para juzgarlas, con un tiempo promedio de **~500ms**, validando con éxito que las frases sigan significando lo mismo en el fondo.
+#### 🧠 Slow Path — Fallback semántico al LLM (~500 ms)
 
-**Request:**
 ```bash
-curl --location 'http://localhost:8082/api/evaluate/scoring' \
---header 'Content-Type: application/json' \
---data '{
+curl -X POST 'http://localhost:8082/api/evaluate/scoring' \
+  -H 'Content-Type: application/json' \
+  -d '{
     "generatedAnswer": "El organismo fiscalizador del sistema financiero y de seguros peruano.",
     "expectedAnswer": "La Superintendencia encargada de supervisar los bancos y sus afiliadas en el Perú."
-}'
+  }'
 ```
 
-**Respuesta Esperada:**
+**Respuesta esperada:**
 ```json
 {
   "score": 90.0,
@@ -243,24 +388,307 @@ curl --location 'http://localhost:8082/api/evaluate/scoring' \
 
 ---
 
-### Paso 6: Monitoreo en Tiempo Real (Actuator + Micrometer)
+### 📊 6. Monitoreo en Tiempo Real (Spring Boot Actuator)
 
-El sistema integra telemetría en vivo para auditar el desempeño y tráfico del evaluador (cuántas llamadas salieron gratis y cuántas requirieron coste de LLM).
+> ⚠️ Las métricas se inicializan de forma **Lazy** — aparecen solo después de la primera evaluación del Paso 5.
 
-> ⚠️ **Nota Importante sobre Error 404 (Not Found):**  
-> Las métricas de código (`rag.scoring.*`) se inicializan de forma "Perezosa" (Lazy) en la RAM. **Si tu petición a Actuator te devuelve un Error HTTP 404, significa que aún no has evaluado ninguna respuesta desde que encendiste el servidor.** Para solucionarlo, simplemente ejecuta primero una validación RAG del **Paso 5** para que el contador nazca internamente, y luego vuelve a consultar Actuator.
-
-**Request (Consultar Tráfico total diferenciado por tags):**
 ```bash
+# Tráfico total de validaciones
 curl 'http://localhost:8082/actuator/metrics/rag.scoring.validations'
-```
 
-**Request (Filtrar Tráfico exclusivamente procesado por LLM Fallback):**
-```bash
+# Filtrar solo las procesadas por el LLM
 curl 'http://localhost:8082/actuator/metrics/rag.scoring.validations?tag=method:LLM'
+
+# Latencia y tiempos de ejecución
+curl 'http://localhost:8082/actuator/metrics/rag.scoring.latency'
+
+# Salud general de la app
+curl 'http://localhost:8082/actuator/health'
 ```
 
-**Request (Consultar Latencia y Tiempos de Ejecución):**
+---
+
+### 🔎 7. Prompt Tracking — Versionado y Comparación de Prompts
+
+Estos endpoints permiten consultar y comparar la evolución de los System Prompts del sistema.
+
+#### Listar todos los prompts registrados
 ```bash
+curl 'http://localhost:8082/api/prompts'
+```
+```json
+{
+  "total": 2,
+  "prompts": ["AIVA_RAG", "SBS_AUDITOR"]
+}
+```
+
+#### Historial de versiones de un prompt
+```bash
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions'
+```
+```json
+{
+  "prompt_name": "SBS_AUDITOR",
+  "total_versions": 2,
+  "versions": [
+    { "id": 2, "version": "1.1.0", "isActive": true, "createdAt": "2026-04-02T..." },
+    { "id": 1, "version": "1.0.0", "isActive": false, "createdAt": "2026-03-28T..." }
+  ]
+}
+```
+
+#### Versión activa actual
+```bash
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions/active'
+```
+
+#### Registrar una versión nueva manualmente
+```bash
+curl -X POST 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "version":     "2.0.0",
+    "content":     "[ROLE]: Nueva versión del auditor SBS...",
+    "description": "Se agregó restricción de idioma"
+  }'
+```
+
+#### Comparar dos versiones (diff unificado)
+```bash
+curl 'http://localhost:8082/api/prompts/compare?id1=1&id2=2'
+```
+```json
+{
+  "version_a": { "id": 1, "version": "1.0.0", "prompt_name": "SBS_AUDITOR" },
+  "version_b": { "id": 2, "version": "1.1.0", "prompt_name": "SBS_AUDITOR" },
+  "diff": "--- SBS_AUDITOR v1.0.0\n+++ SBS_AUDITOR v1.1.0\n@@ -3,4 +3,5 @@\n ..."
+}
+```
+
+#### Historial de ejecuciones (últimas 100)
+```bash
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/executions'
+```
+```json
+{
+  "prompt_name": "SBS_AUDITOR",
+  "total": 37,
+  "executions": [
+    {
+      "promptVersionId": 2,
+      "question": "¿Qué dice la norma ISO 27001?",
+      "contextSnippets": 3,
+      "latencyMs": 1420,
+      "executedAt": "2026-04-02T..."
+    }
+  ]
+}
+```
+
+#### Estadísticas de latencia por versión
+```bash
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/stats'
+```
+```json
+{
+  "prompt_name": "SBS_AUDITOR",
+  "stats_by_version": [
+    {
+      "version": "1.1.0",
+      "total_executions": 25,
+      "avg_latency_ms": 1380,
+      "min_latency_ms": 890,
+      "max_latency_ms": 3200,
+      "is_active": true
+    },
+    {
+      "version": "1.0.0",
+      "total_executions": 12,
+      "avg_latency_ms": 1650,
+      "min_latency_ms": 1100,
+      "max_latency_ms": 4100,
+      "is_active": false
+    }
+  ]
+}
+```
+
+---
+
+## 📋 Resumen de Todos los Endpoints
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `POST` | `/api/documents` | Ingestar texto al vector store |
+| `POST` | `/api/chat` | Chat general RAG con historial |
+| `POST` | `/api/sbs/index` | Indexar PDFs de normativas |
+| `POST` | `/api/sbs/ask` | Pregunta al auditor SBS (JSON) |
+| `POST` | `/api/evaluate/scoring` | Evaluar calidad de respuesta |
+| `GET`  | `/actuator/health` | Salud del servidor |
+| `GET`  | `/actuator/metrics/rag.scoring.validations` | Métricas de validación |
+| `GET`  | `/actuator/metrics/rag.scoring.latency` | Métricas de latencia |
+| `GET`  | `/api/prompts` | Listar prompts registrados |
+| `GET`  | `/api/prompts/{name}/versions` | Historial de versiones |
+| `GET`  | `/api/prompts/{name}/versions/active` | Versión activa actual |
+| `POST` | `/api/prompts/{name}/versions` | Registrar nueva versión manualmente |
+| `GET`  | `/api/prompts/compare?id1=X&id2=Y` | Diff entre dos versiones |
+| `GET`  | `/api/prompts/{name}/executions` | Historial de ejecuciones |
+| `GET`  | `/api/prompts/{name}/stats` | Estadísticas por versión |
+
+---
+
+## 🖥️ Ejemplos de uso con curl
+
+Referencia rápida de todos los comandos curl del proyecto. Reemplaza `localhost` por la IP de tu servidor si aplica (ej. `<IP_DEL_SERVIDOR>`).
+
+> **Base URL:** `http://localhost:8082`
+
+---
+
+### RAG General
+
+```bash
+# ── Ingestar texto libre al Vector Store ──────────────────────────────────────
+curl -X POST 'http://localhost:8082/api/documents' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "El asistente AIVA fue desarrollado por Saamcito en 2026. Es un asistente de voz avanzado para Android.",
+    "source": "conocimiento_interno"
+  }'
+
+# ── Chat conversacional con contexto RAG ──────────────────────────────────────
+curl -X POST 'http://localhost:8082/api/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "¿Quién creó a AIVA?",
+    "conversationId": "sesion-001"
+  }'
+
+# ── Limpiar historial de una conversación ─────────────────────────────────────
+curl -X DELETE 'http://localhost:8082/api/chat/sesion-001'
+```
+
+---
+
+### Normativas SBS
+
+```bash
+# ── Indexar PDFs manualmente (desde resources/docs/) ──────────────────────────
+curl -X POST 'http://localhost:8082/api/sbs/index'
+
+# ── Consulta al auditor normativo SBS (respuesta en JSON) ────────────────────
+curl -X POST 'http://localhost:8082/api/sbs/ask' \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "¿Qué dice la norma ISO 27001?"}'
+
+# ── Otra consulta de ejemplo ───────────────────────────────────────────────────
+curl -X POST 'http://localhost:8082/api/sbs/ask' \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "¿Cuáles son los requisitos de gestión de riesgos según la SBS?"}'
+```
+
+---
+
+### Evaluación de Calidad (Hybrid Scoring)
+
+```bash
+# ── Fast Path: similitud léxica alta (sin LLM, < 5 ms) ───────────────────────
+curl -X POST 'http://localhost:8082/api/evaluate/scoring' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "generatedAnswer": "La SBS es la superintendencia de banca",
+    "expectedAnswer":  "la superintendencia de banca es la sbs"
+  }'
+
+# ── Slow Path: fallback semántico al LLM (~500 ms) ───────────────────────────
+curl -X POST 'http://localhost:8082/api/evaluate/scoring' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "generatedAnswer": "El organismo fiscalizador del sistema financiero y de seguros peruano.",
+    "expectedAnswer":  "La Superintendencia encargada de supervisar los bancos y sus afiliadas en el Perú."
+  }'
+```
+
+---
+
+### Observabilidad (Actuator)
+
+```bash
+# ── Salud general ─────────────────────────────────────────────────────────────
+curl 'http://localhost:8082/actuator/health'
+
+# ── Total de validaciones realizadas ──────────────────────────────────────────
+curl 'http://localhost:8082/actuator/metrics/rag.scoring.validations'
+
+# ── Solo las procesadas por el LLM ────────────────────────────────────────────
+curl 'http://localhost:8082/actuator/metrics/rag.scoring.validations?tag=method:LLM'
+
+# ── Latencia del scoring ──────────────────────────────────────────────────────
 curl 'http://localhost:8082/actuator/metrics/rag.scoring.latency'
+```
+
+---
+
+### Prompt Tracking
+
+```bash
+# ── Listar todos los prompts registrados ──────────────────────────────────────
+curl 'http://localhost:8082/api/prompts'
+
+# ── Historial de versiones de un prompt ───────────────────────────────────────
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions'
+curl 'http://localhost:8082/api/prompts/AIVA_RAG/versions'
+
+# ── Versión activa actual ─────────────────────────────────────────────────────
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions/active'
+curl 'http://localhost:8082/api/prompts/AIVA_RAG/versions/active'
+
+# ── Comparar dos versiones (diff unificado línea a línea) ────────────────────
+curl 'http://localhost:8082/api/prompts/compare?id1=1&id2=2'
+
+# ── Registrar nueva versión manualmente ──────────────────────────────────────
+curl -X POST 'http://localhost:8082/api/prompts/SBS_AUDITOR/versions' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "version":     "2.0.0",
+    "content":     "[ROLE]: Nueva versión del auditor SBS...",
+    "description": "Agrego restricción de idioma y nuevas reglas de citado"
+  }'
+
+# ── Historial de ejecuciones (últimas 100) ────────────────────────────────────
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/executions'
+curl 'http://localhost:8082/api/prompts/AIVA_RAG/executions'
+
+# ── Estadísticas de latencia por versión ─────────────────────────────────────
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/stats'
+curl 'http://localhost:8082/api/prompts/AIVA_RAG/stats'
+```
+
+---
+
+### Flujo completo de prueba recomendado
+
+```bash
+# 1. Verificar que la app está lista
+curl 'http://localhost:8082/actuator/health'
+
+# 2. Ingestar conocimiento
+curl -X POST 'http://localhost:8082/api/documents' \
+  -H 'Content-Type: application/json' \
+  -d '{"content": "La SBS supervisa bancos, seguros y AFPs en Perú.", "source": "sbs-info"}'
+
+# 3. Indexar PDFs normativos
+curl -X POST 'http://localhost:8082/api/sbs/index'
+
+# 4. Hacer una consulta normativa
+curl -X POST 'http://localhost:8082/api/sbs/ask' \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "¿Qué entidades supervisa la SBS?"}'
+
+# 5. Ver qué versión del prompt se usó y su latencia
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/stats'
+
+# 6. Revisar el historial de la última ejecución
+curl 'http://localhost:8082/api/prompts/SBS_AUDITOR/executions'
 ```

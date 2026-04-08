@@ -1,6 +1,4 @@
-<img width="1536" height="1024" alt="image_apk" src="https://github.com/user-attachments/assets/3f291be1-58ed-4573-941a-b444eeec2e9a" />
-
-
+![alt text](image_apk.png)
 # 📱 Documentación Técnica — AIVA (AI Voice Assistant)
 
 ## 1. Descripción General
@@ -98,7 +96,7 @@ app/src/main/
 
 ## 4. Descripción de Cada Archivo
 
-### 4.1 [AndroidManifest.xml](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/AndroidManifest.xml)
+### 4.1 [AndroidManifest.xml](./app/src/main/AndroidManifest.xml)
 Declara los permisos, configuración de red y punto de entrada de la app.
 
 **Permisos requeridos:**
@@ -119,7 +117,7 @@ Declara los permisos, configuración de red y punto de entrada de la app.
 
 ---
 
-### 4.2 [themes.xml](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/res/values/themes.xml)
+### 4.2 [themes.xml](./app/src/main/res/values/themes.xml)
 Define el tema visual de la aplicación.
 
 ```xml
@@ -127,11 +125,11 @@ Define el tema visual de la aplicación.
 ```
 
 > [!IMPORTANT]
-> Debe heredar de `Theme.MaterialComponents` o `Theme.AppCompat` ya que [MainActivity](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/MainActivity.kt#22-75) extiende `AppCompatActivity`.
+> Debe heredar de `Theme.MaterialComponents` o `Theme.AppCompat` ya que [MainActivity](./app/src/main/java/com/saamcito/aiva/presentation/MainActivity.kt#22-75) extiende `AppCompatActivity`.
 
 ---
 
-### 4.3 [activity_main.xml](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/res/layout/activity_main.xml)
+### 4.3 [activity_main.xml](./app/src/main/res/layout/activity_main.xml)
 Interfaz de chat con fondo oscuro (`#0F0F1A`) usando `ConstraintLayout`:
 
 | ID | Tipo | Descripción |
@@ -151,7 +149,7 @@ Interfaz de chat con fondo oscuro (`#0F0F1A`) usando `ConstraintLayout`:
 
 ---
 
-### 4.4 [domain/model/ChatMessage.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/domain/model/ChatMessage.kt)
+### 4.4 [domain/model/ChatMessage.kt](./app/src/main/java/com/saamcito/aiva/domain/model/ChatMessage.kt)
 Modelo simple para representar mensajes de chat.
 
 ```kotlin
@@ -163,13 +161,13 @@ data class ChatMessage(
 
 ---
 
-### 4.5 [data/network/AivaHttpClient.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/network/AivaHttpClient.kt)
+### 4.5 [data/network/AivaHttpClient.kt](./app/src/main/java/com/saamcito/aiva/data/network/AivaHttpClient.kt)
 Realiza peticiones **HTTP POST** al servidor OpenClaw.
 
 **Configuración:**
 ```kotlin
-private val HTTP_URL = "http://[IP_ADDRESS]/v1/chat/completions"
-private val TOKEN = "<YOUR_TOKEN>"
+private val HTTP_URL = "http://<IP_DEL_SERVIDOR>:18789/v1/chat/completions" // Reemplaza con la IP de tu servidor
+private val TOKEN = "<YOUR_TOKEN>" // Reemplaza con tu token de openclaw.json
 ```
 
 **Formato del request (compatible con OpenAI):**
@@ -207,28 +205,28 @@ private val TOKEN = "<YOUR_TOKEN>"
 
 ---
 
-### 4.6 [data/device/TtsManager.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt)
+### 4.6 [data/device/TtsManager.kt](./app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt)
 Gestiona la síntesis de voz (Text-to-Speech).
 
 - **Idioma:** Español (Perú) `Locale("es", "PE")`
-- **Método principal:** [speak(text: String)](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt#31-38) — reproduce el texto en voz alta
-- **Ciclo de vida:** [shutdown()](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt#39-44) para liberar recursos
+- **Método principal:** [speak(text: String)](./app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt#31-38) — reproduce el texto en voz alta
+- **Ciclo de vida:** [shutdown()](./app/src/main/java/com/saamcito/aiva/data/device/TtsManager.kt#39-44) para liberar recursos
 
 ---
 
-### 4.7 [data/device/SpeechRecognitionManager.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/device/SpeechRecognitionManager.kt)
+### 4.7 [data/device/SpeechRecognitionManager.kt](./app/src/main/java/com/saamcito/aiva/data/device/SpeechRecognitionManager.kt)
 Gestiona el reconocimiento de voz (Speech-to-Text).
 
 - **Idioma:** `es-PE` (Español Perú)
-- **Método:** [startListening()](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/device/SpeechRecognitionManager.kt#44-52) — inicia el micrófono
+- **Método:** [startListening()](./app/src/main/java/com/saamcito/aiva/data/device/SpeechRecognitionManager.kt#44-52) — inicia el micrófono
 - **Resultados:** expone `recognitionResults: SharedFlow<RecognitionResult>` con dos estados:
   - `RecognitionResult.Success(text)` — texto reconocido exitosamente
   - `RecognitionResult.Error(errorCode)` — código de error del sistema
 
 ---
 
-### 4.8 [data/repository/ChatRepository.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/repository/ChatRepository.kt)
-Capa mediadora entre el [ViewModel](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/MainViewModel.kt#21-91) y [AivaHttpClient](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/data/network/AivaHttpClient.kt#17-88).
+### 4.8 [data/repository/ChatRepository.kt](./app/src/main/java/com/saamcito/aiva/data/repository/ChatRepository.kt)
+Capa mediadora entre el [ViewModel](./app/src/main/java/com/saamcito/aiva/presentation/MainViewModel.kt#21-91) y [AivaHttpClient](./app/src/main/java/com/saamcito/aiva/data/network/AivaHttpClient.kt#17-88).
 
 ```kotlin
 class ChatRepository(private val httpClient: AivaHttpClient) {
@@ -239,7 +237,7 @@ class ChatRepository(private val httpClient: AivaHttpClient) {
 
 ---
 
-### 4.9 [presentation/UiChatMessage.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/UiChatMessage.kt)
+### 4.9 [presentation/UiChatMessage.kt](./app/src/main/java/com/saamcito/aiva/presentation/UiChatMessage.kt)
 Modelo de UI para cada burbuja de la conversación.
 
 ```kotlin
@@ -252,12 +250,12 @@ data class UiChatMessage(
 
 ---
 
-### 4.10 [presentation/ChatAdapter.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/ChatAdapter.kt)
+### 4.10 [presentation/ChatAdapter.kt](./app/src/main/java/com/saamcito/aiva/presentation/ChatAdapter.kt)
 Adapter de `RecyclerView` con 2 tipos de vista (`TYPE_USER = 0`, `TYPE_AI = 1`). Infla `item_message_user.xml` o `item_message_ai.xml` según el remitente.
 
 ---
 
-### 4.11 [presentation/MainViewModel.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/MainViewModel.kt)
+### 4.11 [presentation/MainViewModel.kt](./app/src/main/java/com/saamcito/aiva/presentation/MainViewModel.kt)
 Núcleo de la lógica. Expone `uiState: StateFlow<MainUiState>` con el **historial completo de mensajes**.
 
 ```kotlin
@@ -282,7 +280,7 @@ Error → agrega UiChatMessage(AI) con ⚠️ + detalle
 
 ---
 
-### 4.12 [presentation/MainActivity.kt](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/src/main/java/com/saamcito/aiva/presentation/MainActivity.kt)
+### 4.12 [presentation/MainActivity.kt](./app/src/main/java/com/saamcito/aiva/presentation/MainActivity.kt)
 Responsabilidades:
 1. Inicializar `ViewModel`, `ChatAdapter` y `RecyclerView` con `stackFromEnd = true`
 2. Solicitar permiso `RECORD_AUDIO`
@@ -340,7 +338,7 @@ Ubicación por defecto:
 
 ---
 
-## 6. Dependencias ([app/build.gradle.kts](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/build.gradle.kts))
+## 6. Dependencias ([app/build.gradle.kts](./app/build.gradle.kts))
 
 | Librería | Versión | Uso |
 |---|---|---|
@@ -361,7 +359,7 @@ Ubicación por defecto:
 .\gradlew.bat assembleDebug
 ```
 
-APK generado en: [app\build\outputs\apk\debug\app-debug.apk](file:///d:/Proyectos/App%20Assistant%20Voice/Aiva/app/build/outputs/apk/debug/app-debug.apk)
+APK generado en: [app\build\outputs\apk\debug\app-debug.apk](./app/build/outputs/apk/debug/app-debug.apk)
 
 ### 7.2 Instalar directamente en dispositivo (USB)
 

@@ -66,7 +66,7 @@ Es obligatorio habilitar el endpoint /v1/chat/completions en el archivo openclaw
 
 2. **Conectividad:** En AivaHttpClient.kt, configura la IP de tu servidor Fedora:
 
-private val HTTP_URL = "http://192.168.1.X:18789/v1/chat/completions" // Reemplaza con la IP de tu servidor
+private val HTTP_URL = "http://<IP_DEL_SERVIDOR>:18789/v1/chat/completions" // Reemplaza con la IP de tu servidor
 
 3. **Seguridad:** La App incluye un X509TrustManager para permitir conexiones con certificados autofirmados en entornos locales.
 
@@ -88,10 +88,12 @@ Error de voz 7: Problemas de conexión o servicios de Google Speech no disponibl
 El proyecto en el directorio [`rag`](./rag) implementa un sistema robusto de **Retrieval-Augmented Generation (RAG)** construido con **Spring Boot** y **Spring AI**. Actúa como el motor de conocimiento especializado del asistente AIVA.
 
 **Características destacadas:**
-- **Base de Datos Vectorial:** Emplea PostgreSQL con la extensión `pgvector` para el almacenamiento y búsqueda semántica de embeddings.
-- **Recuperación Avanzada:** Implementa búsqueda híbrida (Vector + Keyword Search) combinada con Fusión RRF y re-ranking.
-- **Ingesta Documental:** Procesamiento automático de texto plano y PDFs mediante extractores avanzados.
-- **Anti-Alucinaciones:** Uso de Guardrails y prompts estructurados para obligar a la IA a responder basándose única y estrictamente en el contexto proveído.
+- **Base de Datos Vectorial:** PostgreSQL + `pgvector` con abstracción mediante Spring AI, soportando indexación multicomponente y Full-Text Search.
+- **Recuperación Avanzada (Hybrid Search):** Combina similitud semántica (Cosenos) y Keyword Search, fusionados inteligentemente con algoritmo RRF y Re-Ranking.
+- **Data Lineage y Versionado Documental:** Ingesta en tiempo real (File Watcher), validación estricta por Hash SHA-256 para evitar reprocesamiento y almacenamiento de auditoría local en Blobs.
+- **Prompt Tracking (Novedad):** Infraestructura nativa para versionar System Prompts retroactivamente, permitiendo rastrear el desempeño, A/B Testing y latencia en ejecuciones LLM.
+- **Guardrails y Anti-Alucinación:** Respuestas condicionadas al contexto legal, "Context Steering", y generación controlada obligatoria estructurada (JSON).
+- **Observabilidad (MLOps):** Instrumentación experta con OpenTelemetry, rastreo por token en Arize Phoenix, y guardado automático de experimentación algorítmica (Ground Truth) hacia MLflow local.
 
 Para la guía detallada de arquitectura, despliegue y endpoints del pipeline RAG, consulta su [README dedicado](./rag/README.md).
 
