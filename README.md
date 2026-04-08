@@ -1,113 +1,132 @@
+<div align="center">
+  <img width="384" height="256" alt="AIVA Logo" src="https://github.com/user-attachments/assets/029b4427-f2fe-4421-8fe2-8998f1bc9312" />
 
-<img width="384" height="256" alt="logo" src="https://github.com/user-attachments/assets/029b4427-f2fe-4421-8fe2-8998f1bc9312" />
+  # 📱 AIVA — Enterprise AI Voice Assistant (Local-First)
 
+  **Soberanía de Datos • Edge Inference • Arquitectura RAG Escalable**
 
+  **AIVA** es un sistema de asistencia por voz de alto rendimiento, diseñado de forma nativa bajo un enfoque *Local-First* y *Zero-Trust*. Concebido para operar de manera autónoma sin dependencias de terceros en la nube, garantiza privacidad absoluta ("Data Sovereignty") y la menor latencia posible. La plataforma orquesta un cliente nativo en Android con un motor de inferencia de Inteligencia Artificial contenerizado, drásticamente optimizado para su despliegue en hardware de borde (Edge computing) con restricciones de VRAM.
 
-# 📱 AIVA — AI Voice Assistant (Local-First)
-
-**AIVA** es un asistente de voz de alto rendimiento diseñado para operar de manera 100% local, garantizando privacidad absoluta y soberanía de datos. El sistema integra una aplicación móvil nativa en Android con un backend de inferencia de IA desplegado sobre Fedora Linux, optimizado para hardware con VRAM limitada.
-
-| Componente | Tecnología |
-| :--- | :--- |
-| **Plataforma Móvil** | Android (Kotlin, API 26+) |
-| **Arquitectura App** | MVVM + Clean Architecture |
-| **Backend OS** | Fedora Linux (Podman) |
-| **IA Engine** | Ollama + Qwen2.5:3b (100% GPU) |
-| **Gateway** | OpenClaw |
-| **Proxy/Seguridad** | Nginx + SSL (Self-signed) |
+</div>
 
 ---
 
 ## 🏗️ Arquitectura del Sistema
 
-El flujo de datos garantiza una respuesta fluida mediante el procesamiento local en una GPU **NVIDIA RTX 3050 6GB**:
+La topología del sistema implementa un potente modelo cliente-servidor desacoplado, aprovechando la aceleración local por hardware (**NVIDIA RTX 3050 6GB**) en el nodo core para mantener flujos conversacionales ininterrumpidos en tiempo real.
 
-1. **Captura (STT):** La App utiliza `SpeechRecognitionManager` para capturar la voz del usuario en español (es-PE).
-2. **Tránsito:** Se envía una petición HTTP POST compatible con la API de OpenAI al gateway local.
-3. **Inferencia:** **OpenClaw** actúa como puente hacia **Ollama**, donde el modelo **Qwen2.5:3b** procesa la consulta íntegramente en la VRAM.
-4. **Respuesta (TTS):** El texto generado se devuelve a la App y es reproducido mediante `TtsManager`.
+```mermaid
+graph TD
+    subgraph "Edge Client (Android Native App)"
+        STT[Speech-to-Text Engine] -->|Captura de Transcripción| ViewModel[MVVM Controller]
+        ViewModel -->|Payload Compatible OpenAI| HTTPClient[REST Client / Network Layer]
+        HTTPClient -->|Flujo de Respuesta| TTS[Text-to-Speech Engine]
+    end
+
+    subgraph "Core AI Infrastructure (Fedora Linux / Podman)"
+        Gateway[OpenClaw API Gateway] -->|Enrutamiento Local Estricto| Ollama[Motor de Inferencia Ollama]
+        Ollama -->|Generación Qwen2.5:3b| Gateway
+    end
+
+    HTTPClient -.->|HTTP POST / Local LAN| Gateway
+    Gateway -.->|Streamed JSON Response| HTTPClient
+```
+
+### ⚙️ Stack Tecnológico Core
+
+| Dominio | Tecnología / Patrón de Diseño |
+| :--- | :--- |
+| **Cliente Móvil App** | Android SDK (Kotlin), Patrón MVVM + Clean Architecture |
+| **Sistema Operativo & Virtualización** | Fedora Linux, Podman (Ejecución limpia, *daemonless*) |
+| **Motor de LLM Core** | Ollama (Aceleración nativa integral vía NVIDIA CUDA) |
+| **Proxy API / Gateway** | OpenClaw (Implementación adaptada de endpoints tipo OpenAI) |
+| **Capa de Seguridad** | Custom `X.509 Trust Managers` para certificados locales *Self-Signed* |
+| **Motor RAG Expert** | Framework Spring Boot Java, Spring AI, PostgreSQL (`pgvector`) |
 
 ---
 
-## 🛠️ Guía de Instalación (Backend)
+## 🚀 Despliegue de Infraestructura (Servidor Backend)
 
-### 1. Servidor de Modelos (Ollama)
-Levanta el contenedor habilitando el soporte para GPU NVIDIA:
+Todo el ambiente backend ha sido encapsulado en contenedores asegurando un despliegue puramente declarativo, replicable e idempotente.
+
+### 1. Nodo de Inferencia Cuantizado (Ollama)
+Carga el ecosistema de inferencia asignando hardware de GPU en modo passthrough puro:
 ```bash
 podman run -d \
-  --name ollama-server \
-  --device [nvidia.com/gpu=all](https://nvidia.com/gpu=all) \
+  --name aiva-ollama \
+  --device nvidia.com/gpu=all \
   -p 11434:11434 \
-  -v ollama:/root/.ollama \
+  -v ollama-data:/root/.ollama:Z \
   docker.io/ollama/ollama:latest
-
 ```
 
-Descarga el modelo optimizado para evitar latencia por CPU
+*Pre-descarga el modelo para el volcado directo a memoria VRAM sorteando validaciones en CPU:*
 ```bash
-podman exec ollama-server ollama pull qwen2.5:3b
+podman exec aiva-ollama ollama pull qwen2.5:3b
 ```
 
-### 2. Gateway e Interfaz (OpenClaw)
-Configura OpenClaw para gestionar las peticiones de la App:
+### 2. API Gateway & Controlador de Tráfico (OpenClaw)
+Levanta el proxy inverso perimetral que ofusca las llamadas nativas gestionando el tráfico como endpoint estándar REST:
 ```bash
-podman run -d --name openclaw --network host \
+podman run -d --name aiva-gateway --network host \
   -e OLLAMA_API_KEY="ollama-local" \
   -v ~/openclaw_config:/home/node/.openclaw:Z \
   docker.io/alpine/openclaw:main
 ```
-[!IMPORTANT]
-Es obligatorio habilitar el endpoint /v1/chat/completions en el archivo openclaw.json para que la App pueda comunicarse correctamente.
-
----
-## 📱 Configuración de la App Android
-
-1. **Permisos:**  Requiere RECORD_AUDIO e INTERNET.
-
-2. **Conectividad:** En AivaHttpClient.kt, configura la IP de tu servidor Fedora:
-
-private val HTTP_URL = "http://<IP_DEL_SERVIDOR>:18789/v1/chat/completions" // Reemplaza con la IP de tu servidor
-
-3. **Seguridad:** La App incluye un X509TrustManager para permitir conexiones con certificados autofirmados en entornos locales.
-
----
-## 🔍 Troubleshooting (Solución de Problemas)
-Error 404 en la API: Verifica que el endpoint de Chat Completions esté activo en la configuración de OpenClaw.
-
-
-Lentitud extrema: Ejecuta podman exec ollama-server ollama ps y confirma que el modelo muestre 100% GPU.
-
-CLEARTEXT communication not permitted: Verifica que android:usesCleartextTraffic="true" esté definido en el AndroidManifest.xml.
-
-Error de voz 7: Problemas de conexión o servicios de Google Speech no disponibles en el smartphone.
+> [!IMPORTANT]  
+> **Política de Seguridad Operacional:** Es estricto habilitar de forma explícita el endpoint `/v1/chat/completions` en la matriz de configuraciones de `openclaw.json`. Por diseño en OpenClaw, este túnel de acceso está restringido.
 
 ---
 
-## 🧠 Backend de Conocimiento (Directorio `rag`)
+## 📱 Capa de Presentación (App Android)
 
-El proyecto en el directorio [`rag`](./rag) implementa un sistema robusto de **Retrieval-Augmented Generation (RAG)** construido con **Spring Boot** y **Spring AI**. Actúa como el motor de conocimiento especializado del asistente AIVA.
+El cliente de Android está diseñado como un *Thin Client* enfocado a la alta disponibilidad y reactividad, abstrayendo la pesada lógica del LLM utilizando *Clean Architecture*.
 
-**Características destacadas:**
-- **Base de Datos Vectorial:** PostgreSQL + `pgvector` con abstracción mediante Spring AI, soportando indexación multicomponente y Full-Text Search.
-- **Recuperación Avanzada (Hybrid Search):** Combina similitud semántica (Cosenos) y Keyword Search, fusionados inteligentemente con algoritmo RRF y Re-Ranking.
-- **Data Lineage y Versionado Documental:** Ingesta en tiempo real (File Watcher), validación estricta por Hash SHA-256 para evitar reprocesamiento y almacenamiento de auditoría local en Blobs.
-- **Prompt Tracking (Novedad):** Infraestructura nativa para versionar System Prompts retroactivamente, permitiendo rastrear el desempeño, A/B Testing y latencia en ejecuciones LLM.
-- **Guardrails y Anti-Alucinación:** Respuestas condicionadas al contexto legal, "Context Steering", y generación controlada obligatoria estructurada (JSON).
-- **Observabilidad (MLOps):** Instrumentación experta con OpenTelemetry, rastreo por token en Arize Phoenix, y guardado automático de experimentación algorítmica (Ground Truth) hacia MLflow local.
-
-Para la guía detallada de arquitectura, despliegue y endpoints del pipeline RAG, consulta su [README dedicado](./rag/README.md).
+- **Control Granular de Telemetría:** Reclama permisos base absolutos para `RECORD_AUDIO` e `INTERNET`.
+- **Enrutamiento Determinista (`AivaHttpClient.kt`):** Canaliza las llamadas a la infraestructura en malla (LAN):
+  ```kotlin
+  // Inyección de Endpoint Estático Centralizado
+  private val HTTP_URL = "http://<IP_DEL_SERVIDOR>:18789/v1/chat/completions"
+  ```
+- **Auditoría Zero-Trust Local:** Uso intencional de un `X509TrustManager` modificado para aceptar transacciones TLS no firmadas por AC's públicas, mitigando rechazos SSL dentro del aislamiento LAN interno.
 
 ---
 
-## 🚀 Futuras Mejoras (Roadmap)
+## 🧠 Motor RAG de Conocimiento Corporativo (Directorio `rag`)
 
-Memoria de Contexto: Optimización del historial de mensajes para mantener conversaciones coherentes a largo plazo.
+Situado en el directorio [`rag`](./rag), este módulo sube el nivel de AIVA desde un simple interlocutor LLM hacia un **Sistema Experto Basado en Recuperación (Retrieval-Augmented Generation)** utilizando **Spring Boot** y el framework predictivo **Spring AI**.
 
-Wake Word: Activación por voz ("Hey Aiva") sin necesidad de interacción manual.
+**Highlights Arquitectónicos de MLOps & Data Engineering:**
+- **Base de Datos Vectorial de Alto Rendimiento:** PostgreSQL + `pgvector` montado sobre Spring AI, facilitando indexación escalar multidimensional.
+- **Recuperación Híbrida Inteligente (Hybrid Search):** Implementación predictiva que unifica Cosine Similarity (Vectores) y Keyword Search (Full-Text), equilibrando sus resultados matemáticamente con *Reciprocal Rank Fusion (RRF)* y Re-Ranking algorítmico.
+- **Data Lineage Inmutable:** Ingesta en tiempo real con monitoreo `FileWatcher`. Validación criptográfica por Hash SHA-256 para aislamiento del conocimiento y bitácora física histórica en Blob Storage *Cold Retrieval*.
+- **Prompt Lifecycle Tracking:** Sistema auditor local que maneja las versiones de *System Prompts* iterativamente (A/B Testing en Vivo), relacionando con base empírica las latencias de ejecución y la confiabilidad del modelo en el LLM local.
+- **Guardrails Estrictos Bi-Direccionales:** Configuración estricta de "Context Steering". Previene Alucinaciones Críticas amurallando las derivas de texto hacia un forzado mapeo estructural legal (e.g. JSON puro para normativas SBS).
+- **Observabilidad Nivel Producción:** Instrumentación total delegada a OpenTelemetry con inyección de *Spans* de latencia a token visualizados en *Arize Phoenix*; apoyado con pruebas masivas (Ground Truth) empaquetadas silenciosamente en un servidor *MLflow* local.
+
+Para explorar toda la API orientada a eventos, pipelines de embeddings y despliegues, profundiza en su [Documentación Técnica (RAG API)](./rag/README.md).
 
 ---
-Desarrollado por: David Raymundo Lache Alvarez
 
-Proyecto de Portafolio - Ingeniería de IA y Desarrollo Móvil
+## 🔧 Runbooks de Operación (Troubleshooting Técnico)
+
+| Patrón de Falla | Análisis de Causa Raíz (RCA) & Resolución Automática |
+| :--- | :--- |
+| **Edge HTTP Error 404** | Error en capa Gateway perimetral. Refactoriza el `openclaw.json` encendiendo `endpoints.chatCompletions.enabled` a *true*. |
+| **Inference Stalling / Latency Spike** | Falla de descarga VRAM (*Fallback* a CPU). Ejecuta `podman exec aiva-ollama ollama ps`; si el índice baja del `100% GPU`, purga y recarga el daemon de *NVIDIA Container Toolkit*. |
+| **CLEARTEXT Protocol Rejected** | El OS perimetral denegó el tráfico HTTP en plano. Forzar omisión con `android:usesCleartextTraffic="true"` en la topografía directiva del `AndroidManifest.xml`. |
+| **Hardware STT Error Code 7** | Pérdida de resolución de host subyacente. El servicio pasivo de accesibilidad Google SR o red colapsó impidiendo la captura temporal. |
 
 ---
+
+## 🗺️ Roadmap Estratégico y Evolución Arquitectónica
+
+- [ ] **Stateful Long-Term Memory:** Inyección heurística con técnica de *Sliding Window Context* para mantener flujos conversacionales coherentes sobre sesiones prolongadas sin penalidades agresivas de tokens.
+- [ ] **Hotword / Wake-Word Edge Triggering:** Incorporar un micro-modelo Machine Learning ligero en el dispositivo para interceptación continua en segundo plano ("Hey Aiva").
+- [ ] **Despliegue Multi-Agentic (Tool Calling):** Ampliar el pipeline de RAG para ejecutar disparos a funciones externas a demanda y manipulaciones del Sistema Operativo host.
+
+---
+<div align="center">
+  <b>Ingeniería Estratégica y Desarrollo Core:</b> David Raymundo Lache Alvarez <br>
+  <i>Proyecto de Portafolio — AI Systems Architecture & Mobile Engineering</i>
+</div>
