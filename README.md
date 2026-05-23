@@ -140,6 +140,6 @@ Para explorar toda la API orientada a eventos, pipelines de embeddings y desplie
 
 ---
 <div align="center">
-  <b>Ingeniería Estratégica y Desarrollo Core:</b> David Raymundo Lache Alvarez <br>
+  <b>Ingeniería de Sistemas e Informática:</b> David Raymundo Lache Alvarez <br>
   <i>Proyecto de Portafolio — AI Systems Architecture & Mobile Engineering</i>
 </div>
